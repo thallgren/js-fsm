@@ -4,13 +4,13 @@ import * as genesis from "../src/genesis/genesis";
 export namespace Genesis {
   export namespace Aws {
     abstract class BasicResource extends genesis.Resource {
-      readonly ensure: string;
+      readonly ensure: 'present' | 'absent' | 'latest';
       readonly region: string;
       readonly tags: {};
 
       protected constructor({title, ensure, region, tags}: {
         title: string,
-        ensure: string,
+        ensure: 'present' | 'absent' | 'latest',
         region: string,
         tags?: {}
       }) {
@@ -53,7 +53,7 @@ export namespace Genesis {
           vpc_id = 'FAKED_VPC_ID'
         }: {
           title: string,
-          ensure: string,
+          ensure: 'present' | 'absent' | 'latest',
           region: string,
           tags: {},
           cidr_block: string,
@@ -102,7 +102,7 @@ export namespace Genesis {
           subnet_id = 'FAKED_SUBNET_ID'
         }: {
           title: string,
-          ensure: string,
+          ensure: 'present' | 'absent' | 'latest',
           region: string,
           tags: {},
           cidr_block: string,
@@ -145,7 +145,7 @@ export namespace Genesis {
           internet_gateway_id = 'FAKED_GATEWAY_ID'
         }: {
           title: string,
-          ensure: string,
+          ensure: 'present' | 'absent' | 'latest',
           region: string,
           tags: {},
           internet_gateway_id?: string
