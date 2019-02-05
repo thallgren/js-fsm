@@ -1,9 +1,8 @@
-import * as genesis from "../src/genesis/genesis";
 
 // Types generated based on typeset from provider
 export namespace Genesis {
   export namespace Aws {
-    abstract class BasicResource extends genesis.Resource {
+    abstract class BasicResource {
       readonly ensure: string;
       readonly region: string;
       readonly tags: {};
@@ -14,7 +13,6 @@ export namespace Genesis {
         region: string,
         tags?: {}
       }) {
-        super({title: title});
         this.ensure = ensure;
         this.region = region;
         this.tags = tags;
@@ -25,7 +23,7 @@ export namespace Genesis {
       }
 
       __pvalue() : {[s: string]: any} {
-        let ih = super.__pvalue();
+        let ih = {};
         ih['ensure'] = this.ensure;
         ih['region'] = this.region;
         if(this.tags !== undefined) {
@@ -36,6 +34,9 @@ export namespace Genesis {
     }
 
     export class Vpc extends BasicResource {
+      readonly amazon_provided_ipv6_cidr_block: boolean;
+      readonly is_default: boolean;
+      readonly state: string;
       readonly cidr_block: string;
       readonly enable_dns_hostnames: boolean;
       readonly enable_dns_support: boolean;
@@ -43,25 +44,28 @@ export namespace Genesis {
 
       constructor(
         {
-          title,
-          ensure,
-          region,
           tags,
+          amazon_provided_ipv6_cidr_block,
+          is_default,
+          state,
           cidr_block,
           enable_dns_hostnames,
           enable_dns_support,
           vpc_id = 'FAKED_VPC_ID'
         }: {
-          title: string,
-          ensure: string,
-          region: string,
           tags: {},
+          amazon_provided_ipv6_cidr_block: boolean,
+          is_default: boolean,
+          state: string,
           cidr_block: string,
           enable_dns_hostnames: boolean,
           enable_dns_support: boolean,
           vpc_id?: string
         }) {
-        super({title: title, ensure: ensure, region: region, tags: tags});
+        super({title: '', ensure: '', region: null, tags: tags});
+        this.amazon_provided_ipv6_cidr_block = amazon_provided_ipv6_cidr_block;
+        this.is_default = is_default;
+        this.state = state;
         this.cidr_block = cidr_block;
         this.enable_dns_hostnames = enable_dns_hostnames;
         this.enable_dns_support = enable_dns_support;
@@ -87,34 +91,40 @@ export namespace Genesis {
     export class Subnet extends BasicResource {
       readonly cidr_block: string;
       readonly map_public_ip_on_launch: boolean;
+      readonly assign_ipv6_address_on_creation: boolean;
+      readonly default_for_az: boolean;
       readonly vpc_id: string;
       readonly subnet_id: string;
+      readonly state: string;
 
       constructor(
         {
-          title,
-          ensure,
-          region,
           tags,
           cidr_block,
           map_public_ip_on_launch,
+          assign_ipv6_address_on_creation,
+          default_for_az,
           vpc_id,
+          state,
           subnet_id = 'FAKED_SUBNET_ID'
         }: {
-          title: string,
-          ensure: string,
-          region: string,
           tags: {},
           cidr_block: string,
           map_public_ip_on_launch: boolean,
-          vpc_id: string
+          assign_ipv6_address_on_creation: boolean,
+          default_for_az: boolean,
+          vpc_id: string,
+          state: string,
           subnet_id?: string,
         }) {
-        super({title: title, ensure: ensure, region: region, tags: tags});
+        super({title: '', ensure: '', region: null, tags: tags});
         this.cidr_block = cidr_block;
         this.map_public_ip_on_launch = map_public_ip_on_launch;
+        this.assign_ipv6_address_on_creation = assign_ipv6_address_on_creation;
+        this.default_for_az = default_for_az;
         this.vpc_id = vpc_id;
         this.subnet_id = subnet_id;
+        this.state = state;
       }
 
       __ptype() : string {
@@ -164,6 +174,27 @@ export namespace Genesis {
           ih['internet_gateway_id'] = this.internet_gateway_id;
         }
         return ih;
+      }
+    }
+
+
+    export class RouteTable extends BasicResource {
+      readonly vpc_id: string;
+      tags: {},
+
+      constructor(
+        {
+          vpc_id,
+          tags,
+        }: {
+          vpc_id: string,
+          tags: {},
+        }) {
+        super({title: '', ensure: '', region: null, tags: tags});
+      }
+
+      __ptype() : string {
+        return 'Genesis::Aws::RouteTable';
       }
     }
   }

@@ -1,13 +1,5 @@
 import * as datapb from "./data_pb";
 
-export function fromDataHash(dataHash: datapb.DataHash): { [s: string]: any } {
-  let hash: {[s: string]: any } = {};
-  dataHash.getEntriesList().forEach(function (entry: datapb.DataEntry) {
-    hash[entry.getKey()] = fromData(entry.getValue());
-  });
-  return hash;
-}
-
 export function fromData(data: datapb.Data): any {
   switch (data.getKindCase().valueOf()) {
   case datapb.Data.KindCase.BOOLEAN_VALUE:
@@ -21,7 +13,11 @@ export function fromData(data: datapb.Data): any {
   case datapb.Data.KindCase.ARRAY_VALUE:
     return data.getArrayValue().getValuesList().map(fromData);
   case datapb.Data.KindCase.HASH_VALUE:
-    return fromDataHash(data.getHashValue());
+    let hash: {[s: string]: any } = {};
+    data.getHashValue().getEntriesList().forEach(function (entry: datapb.DataEntry) {
+      hash[fromData(entry.getKey())] = fromData(entry.getValue());
+    });
+    return hash;
   }
   return null;
 }
@@ -31,7 +27,7 @@ export function toDataHash(value: { [s: string]: any }): datapb.DataHash {
   for (let key in value) {
     if (value.hasOwnProperty(key)) {
       let entry = new datapb.DataEntry();
-      entry.setKey(key);
+      entry.setKey(toData(key));
       entry.setValue(toData(value[key]));
       entries.push(entry);
     }
@@ -78,7 +74,7 @@ export function toData(value: any): datapb.Data {
     }
     break;
   case 'symbol':
-    d.setStringValue(value);
+    d.setStringValue(value.toString());
     break;
   default:
     d.setUndefValue(value);

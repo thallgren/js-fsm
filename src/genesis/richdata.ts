@@ -1,4 +1,6 @@
 import {Sensitive} from "./sensitive";
+import {TypeNames} from "../pcore/Context";
+import {isPcoreObject, isPcoreValue} from "../pcore/Serializer";
 
 export const PTYPE_KEY = '__ptype';
 export const PVALUE_KEY = '__pvalue';
@@ -8,7 +10,8 @@ export const DEFAULT = Symbol('default');
 // Data must be declared this way to avoid circular reference errors from TypeScript
 export interface DataMap { [x: string]: Data }
 export interface DataArray extends Array<Data> {}
-export type Data = null | string | number | boolean | DataMap | DataArray
+export type ScalarData = string | number | boolean
+export type Data = null | ScalarData | DataMap | DataArray
 
 function hashSelect(hash : DataMap, predicate : (key : string, value : Data) => boolean) : DataMap {
   let result : DataMap = {};
@@ -130,35 +133,6 @@ export class FromDataConverter {
   }
 }
 
-export class TypeNames {
-  private typeMap : Map<()=>void, string>;
-
-  constructor(base : {}) {
-    let tn = new Map<()=>void, string>();
-    TypeNames.createTypeMap(null, base, tn);
-    this.typeMap = tn;
-  }
-
-  nameForType(type : ()=>void) : string {
-    return this.typeMap.get(type);
-  }
-
-  private static createTypeMap(ns : string, base : any, map : Map<()=>void, string>) : void {
-    if(typeof base === 'function') {
-      map.set(base, ns);
-      return;
-    }
-
-    if(typeof base === 'object') {
-      for (let key in base) {
-        if (key.match(/^[A-Z]/)) {
-          TypeNames.createTypeMap(ns === null ? key : ns + '::' + key, base[key], map);
-        }
-      }
-    }
-  }
-}
-
 export class ToDataConverter {
   private typeNames : TypeNames;
 
@@ -204,11 +178,11 @@ export class ToDataConverter {
       case undefined:
         return null;
       default:
-        let ptype = value.hasOwnProperty(PTYPE_KEY) ? value.__ptype() : this.typeNames.nameForType(value.constructor);
+        let ptype = isPcoreObject(value) ? value.__ptype() : this.typeNames.nameForType(value.constructor);
         if(ptype === undefined)
           break;
 
-        let pv = value.hasOwnProperty(PVALUE_KEY) ? value.__pvalue() : ToDataConverter.initializerFor(value);
+        let pv = isPcoreValue(value) ? value.__pvalue() : ToDataConverter.initializerFor(value);
         return isHash(pv)
           ? Object.assign({ __ptype: ptype }, this.convertHash(pv))
           : { __ptype: ptype, __pvalue: pv };

@@ -1,28 +1,29 @@
+/*
 import * as grpc from "grpc";
-import * as fsmpb from "../fsmpb/fsm_pb";
-import * as fsm_grpc from "../fsmpb/fsm_grpc_pb";
+import * as fsmpb from "../servicepb/service_pb";
+import * as fsm_grpc from "../servicepb/service_grpc_pb";
 import * as datapb from "../datapb/reflect"
 
 import * as health from "grpc-health-check/health";
-import {toPuppetType} from "./puppet_types";
+import {toPcoreType} from "./puppet_types";
 import * as net from "net";
 import {ServerDuplexStream} from "grpc";
 import {Data, FromDataConverter, ToDataConverter} from "./richdata";
 
-const InvokeAction = 0;
+const InvokeActivity = 0;
 const GenesisResource = 10;
 const GenesisNotice = 11;
 
 export type NamedValues = { [s: string]: any };
 export type StringMap = { [s: string]: string };
 
-type ActionData = [string, string, NamedValues];
+type ActivityData = [string, string, NamedValues];
 
 function isNamedValues(value: any): value is NamedValues {
   return typeof value === 'object' && value.constructor == Object;
 }
 
-function isActionData(value : any): value is ActionData {
+function isActivityData(value : any): value is ActivityData {
   if(Array.isArray(value)) {
     let av = <any[]>value;
     return av.length === 3 && typeof av[0] === 'string' && typeof av[1] === 'string' && isNamedValues(av[2]);
@@ -30,7 +31,7 @@ function isActionData(value : any): value is ActionData {
   return false;
 }
 
-type ActionFunction = (genesis: Context, input: NamedValues) => Promise<NamedValues>;
+type ActivityFunction = (genesis: Context, input: NamedValues) => Promise<NamedValues>;
 type MessageStream = ServerDuplexStream<fsmpb.Message, fsmpb.Message>
 
 export type ParamDecl = { type: string, lookup: Data }
@@ -39,18 +40,18 @@ export type ParamMap = { [x: string]: string | ParamDecl }
 type IterAtom = number | string | boolean | ParamDecl;
 export type IterValue = number | ParamDecl | Array<IterAtom> | { [x:string]: IterAtom }
 
-export interface Action {
+export interface Activity {
   readonly input?: ParamMap;
   readonly output?: StringMap;
 }
 
-export interface Function extends Action {
+export interface Function extends Activity {
   readonly iterate?: IterValue;
-  readonly producer: ActionFunction;
+  readonly producer: ActivityFunction;
 }
 
-export interface Actor extends Action {
-  readonly actions : { [s: string]: Function | Actor };
+export interface Actor extends Activity {
+  readonly activities : { [s: string]: Function | Actor };
 }
 
 export abstract class Resource {
@@ -68,7 +69,6 @@ export abstract class Resource {
     return { title: this.title };
   }
 }
-
 export class Context {
   private readonly stream: MessageStream;
   private readonly toData: ToDataConverter;
@@ -116,22 +116,22 @@ export class Context {
 }
 
 class FunctionImpl implements Function {
-  readonly producer: ActionFunction;
+  readonly producer: ActivityFunction;
   readonly iterate?: IterValue;
   readonly input?: ParamMap;
   readonly output?: StringMap;
 
-  constructor(action : Function) {
-    this.producer = action.producer;
-    this.iterate = action.iterate;
-    this.input = action.input;
-    this.output = action.output;
+  constructor(activity : Function) {
+    this.producer = activity.producer;
+    this.iterate = activity.iterate;
+    this.input = activity.input;
+    this.output = activity.output;
   }
 
   private static convertType(t : string, types: StringMap) : string {
     let ct = types[t];
     if(ct === undefined)
-      ct = toPuppetType(t);
+      ct = toPcoreType(t);
     return ct;
   }
 
@@ -155,8 +155,8 @@ class FunctionImpl implements Function {
     return params;
   }
 
-  pbAction(name: string, types: StringMap): fsmpb.Action {
-    let a = new fsmpb.Action();
+  pbActivity(name: string, types: StringMap): fsmpb.Activity {
+    let a = new fsmpb.Activity();
     a.setName(name);
     a.setInputList(FunctionImpl.createParams(this.input, types));
     a.setOutputList(FunctionImpl.createParams(this.output, types));
@@ -209,10 +209,10 @@ export class ActorServer {
       getActor : (call : grpc.ServerUnaryCall<fsmpb.ActorRequest>, callback : (error : Error | null, actor : fsmpb.Actor) => void) => {
         callback(null, this.getActor(call.request.getName()))
       },
-      invokeAction: (stream: MessageStream) => {
+      invokeActivity: (stream: MessageStream) => {
         stream.on('data', am => {
-          if (am.getId() == InvokeAction) {
-            this.invokeAction(am, stream)
+          if (am.getId() == InvokeActivity) {
+            this.invokeActivity(am, stream)
           }
         });
         stream.on('end', () => stream.end());
@@ -225,7 +225,7 @@ export class ActorServer {
   }
 
   registerType(name : string, decl: string) {
-    this.types[name] = toPuppetType(decl);
+    this.types[name] = toPcoreType(decl);
   }
 
   start() {
@@ -247,10 +247,10 @@ export class ActorServer {
     if(actor !== undefined) {
       let ar = new fsmpb.Actor();
       let as : Array<fsmpb.Action> = [];
-      for(let key in actor.actions) {
-        let action = actor.actions[key];
-        if((<FunctionImpl>action).pbAction !== undefined)
-          as.push((<FunctionImpl>action).pbAction(key, this.types))
+      for(let key in actor.activities) {
+        let activity = actor.activities[key];
+        if((<FunctionImpl>activity).pbActivity !== undefined)
+          as.push((<FunctionImpl>activity).pbActivity(key, this.types))
       }
       ar.setActionsList(as);
       ar.setInputList(FunctionImpl.createParams(actor.input, this.types));
@@ -260,26 +260,26 @@ export class ActorServer {
     throw new Error(`no such actor '${actorName}'`);
   }
 
-  private invokeAction(am: fsmpb.Message, stream: MessageStream) {
+  private invokeActivity(am: fsmpb.Message, stream: MessageStream) {
     let value = datapb.fromData(am.getValue());
-    if(!isActionData(value)) {
+    if(!isActivityData(value)) {
       process.stderr.write(`data ${value}\n`);
-      throw new Error('unexpected data sent to invokeAction');
+      throw new Error('unexpected data sent to invokeActivity');
     }
 
-    let ad = <ActionData>value;
+    let ad = <ActivityData>value;
     let actorName = ad[0];
     let actor = this.actors[actorName];
     if(actor === undefined)
       throw new Error(`no such actor '${actorName}'`);
 
-    let actionName = ad[1];
-    let action = actor.actions[actionName];
-    if(action === undefined)
-      throw new Error(`no such action '${actionName}' in actor '${actorName}'`);
+    let activityName = ad[1];
+    let activity = actor.activities[activityName];
+    if(activity === undefined)
+      throw new Error(`no such activity '${activityName}' in actor '${actorName}'`);
 
     let genesis = new Context(this.nsBase, stream);
-    (<Function>action).producer(genesis, ad[2]).then((result: {}) => {
+    (<Function>activity).producer(genesis, ad[2]).then((result: {}) => {
       am.setValue(datapb.toData(result));
       stream.write(am);
     });
@@ -290,19 +290,19 @@ class ActorImpl implements Actor {
   readonly name: string;
   readonly input?: ParamMap;
   readonly output?: StringMap;
-  readonly actions : { [s: string]: Function | Actor };
+  readonly activities : { [s: string]: Function | Actor };
 
   constructor(name : string, declaration : Actor) {
     this.name = name;
     this.input = declaration.input;
     this.output = declaration.output;
-    this.actions = {};
-    for(let actionName in declaration.actions) {
-      let action = declaration.actions[actionName];
-      this.actions[actionName] = (<Function>action).producer === undefined
-        ? new ActorImpl(actionName, <Actor>action)
-        : new FunctionImpl(<Function>action);
+    this.activities = {};
+    for(let activityName in declaration.activities) {
+      let activity = declaration.activities[activityName];
+      this.activities[activityName] = (<Function>activity).producer === undefined
+        ? new ActorImpl(activityName, <Actor>activity)
+        : new FunctionImpl(<Function>activity);
     }
   }
 }
-
+*/

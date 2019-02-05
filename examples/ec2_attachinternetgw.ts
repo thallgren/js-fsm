@@ -1,3 +1,4 @@
+/*
 import {Genesis} from "./ec2_types";
 import {Context, ActorServer, StringMap} from "../src/genesis/genesis";
 
@@ -81,3 +82,4 @@ server.addActor('attach', {
 });
 
 server.start();
+*/

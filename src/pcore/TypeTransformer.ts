@@ -1,13 +1,15 @@
 import * as ts from "typescript";
+import {Expression, Identifier, isExpressionStatement, isFunctionLike} from "typescript";
+import {StringMap} from "./Util";
 
-function parseType(t : string) : ts.TypeNode {
-  let fn = '/parameter/type.ts';
-  let sf = ts.createSourceFile(fn, 'var x:' + t + ';', ts.ScriptTarget.ES2018, true);
-  let diag = ts.createProgram([fn], {}).getSyntacticDiagnostics(sf);
-  if(diag.length > 0) {
-    throw new Error(`'${t}' is not a valid type definition`);
-  }
-  return (<ts.VariableStatement>sf.statements[0]).declarationList.declarations[0].type;
+/**
+ * Transform the string representation of a TypeScript type definition into
+ * a string representation of its corresponding Pcore type.
+ * @param tsType - String representation of the TypeScript type to convert
+ * @returns String representation of the resulting Puppet type.
+ */
+export function toPcoreType(tsType : string) : string {
+  return transformType(parseType(tsType));
 }
 
 function transformTypeName(typeName: string) : string {
@@ -27,9 +29,172 @@ function transformTypeName(typeName: string) : string {
   case 'integer':
   case 'bigint':
     return 'Integer';
+  case 'Date':
+    return 'Timestamp';
+  case 'RegExp':
+    return 'Regexp';
   default:
     return typeName;
   }
+}
+
+/**
+ * inferWorkflowTypes uses the TypeScript compiler to infer the types of input arguments and
+ * resource states.
+ * @param fn
+ * @param content
+ */
+export function inferWorkflowTypes(fn : string, content : string) : StringMap {
+  let sf = ts.createSourceFile(fn, content, ts.ScriptTarget.ES2018, true);
+  let collector = {};
+  let path = [];
+
+  let collect = (name : string, value : any) => {
+    let leaf = collector;
+    path.forEach((p) => {
+      let b = leaf[p];
+      if(b === undefined) {
+        b = {};
+        leaf[p] = b;
+      }
+      leaf = b;
+    })
+    leaf[name] = value;
+  }
+
+  let expectKind = <T extends ts.Node>(n : ts.Node, okFunc : (n : ts.Node) => n is T, expected : string) : T => {
+    if(!okFunc(n)) {
+      throw new Error(`expected node of ${expected} type. Got kind: ${n.kind}`)
+    }
+    return n;
+  };
+
+  let expectHash = (na : ts.NodeArray<Expression>) : ts.ObjectLiteralExpression => {
+    if(na.length == 1) {
+      return expectKind(na[0], ts.isObjectLiteralExpression, 'object literal')
+    }
+    throw new Error(`expected exactly one parameter of type object literal`);
+  };
+
+  let traverseProperties = (o : ts.ObjectLiteralExpression, tf : (pa : ts.PropertyAssignment) => void) => {
+    o.properties.forEach((p) => tf(expectKind(p, ts.isPropertyAssignment, 'property assignment')));
+  };
+
+  let traverseAction = (o : ts.ObjectLiteralExpression) => {
+  };
+
+  let traverseWorkflow = (o : ts.ObjectLiteralExpression) => {
+    traverseProperties(o, traverseWorkflowProperty);
+  };
+
+  let traverseStateBody = (b: ts.ConciseBody) => {
+    if(isExpressionStatement(b)) {
+      console.log(b);
+    } else {
+      b.forEachChild((bc) => {
+        if(ts.isReturnStatement(bc) && bc.parent === b && ts.isNewExpression(bc.expression)) {
+          let ne = bc.expression;
+          if(ts.isPropertyAccessExpression(ne.expression) && ne.arguments.length === 1) {
+            let pa = ne.expression;
+            if(ts.isIdentifier(pa.expression)) {
+              collect('type', pa.getText());
+            }
+          }
+        } else if(ts.isPropertyAccessExpression(bc) && ts.isNewExpression(bc.parent)) {
+          let np = bc.parent.parent;
+          if(ts.isArrowFunction(np) && np.body === b && ts.isIdentifier(bc.expression)) {
+            collect('type', bc.getText());
+          }
+        }
+      })
+    }
+  };
+
+  let traverseResourceProperty = (pa: ts.PropertyAssignment) => {
+    if(pa.name.getText() === 'state' && isFunctionLike(pa.initializer)) {
+      let f = (<ts.FunctionLikeDeclaration>pa.initializer);
+      let params = {};
+      f.parameters.forEach((p) => {
+        params[p.name.getText()] = p.type === undefined ? 'any' : p.type.getText();
+      });
+      collect('input', params);
+      traverseStateBody(f.body);
+      return;
+    }
+  };
+
+  let traverseResource = (o : ts.ObjectLiteralExpression) => {
+    traverseProperties(o, traverseResourceProperty);
+  };
+
+  // Traverses the workflow hash
+  let traverseWorkflowProperty = (n : ts.PropertyAssignment) => {
+    if(n.name.getText() !== 'activities')
+      return;
+
+    let o = expectKind(n.initializer, ts.isObjectLiteralExpression, 'object literal');
+    o.properties.forEach((p) => {
+      let pa = expectKind(p, ts.isPropertyAssignment, 'property assignment');
+      let f = expectKind(pa.initializer, ts.isCallExpression, 'call');
+      let c = f.expression;
+      if(ts.isIdentifier(c)) {
+        let key = (<Identifier>c).text;
+        switch (key) {
+        case 'resource':
+          path.push(pa.name.getText());
+          traverseResource(expectHash(f.arguments));
+          path.pop();
+          break;
+        case 'action':
+          path.push(pa.name.getText());
+          traverseAction(expectHash(f.arguments));
+          path.pop();
+          break;
+        case 'workflow':
+          path.push(pa.name.getText());
+          traverseWorkflow(expectHash(f.arguments));
+          path.pop();
+          break;
+        }
+      }
+    });
+  };
+
+  let traverse = (o : ts.Node) => {
+    switch(o.kind) {
+    case ts.SyntaxKind.CallExpression:
+      let f = (<ts.CallExpression>o);
+      let c = f.expression;
+      if(ts.isIdentifier(c)) {
+        let key = (<Identifier>c).text;
+        switch (key) {
+        case 'resource':
+          traverseResource(expectHash(f.arguments));
+          return;
+        case 'action':
+          traverseAction(expectHash(f.arguments));
+          return;
+        case 'workflow':
+          traverseWorkflow(expectHash(f.arguments));
+          return;
+        }
+      }
+    }
+    ts.forEachChild(o, traverse);
+  };
+
+  ts.forEachChild(sf, traverse);
+  return collector;
+}
+
+function parseType(t : string) : ts.TypeNode {
+  let fn = '/parameter/type.ts';
+  let sf = ts.createSourceFile(fn, 'var x:' + t + ';', ts.ScriptTarget.ES2018, true);
+  let diag = ts.createProgram([fn], {}).getSyntacticDiagnostics(sf);
+  if(diag.length > 0) {
+    throw new Error(`'${t}' is not a valid type definition`);
+  }
+  return (<ts.VariableStatement>sf.statements[0]).declarationList.declarations[0].type;
 }
 
 function typeTransformationError(t : ts.TypeNode) : never {
@@ -249,14 +414,4 @@ function transformType(t : ts.TypeNode) : string {
     typeTransformationError(t);
   }
   return transformTypeName(tn);
-}
-
-/**
- * Transform the string representation of a TypeScript type definition into
- * a string representation of its corresponding Puppet type.
- * @param tsType - String representation of the TypeScript type to convert
- * @returns String representation of the resulting Puppet type.
- */
-export function toPuppetType(tsType : string) : string {
-  return transformType(parseType(tsType));
 }

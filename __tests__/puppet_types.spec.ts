@@ -1,7 +1,7 @@
 /// <reference types="jest" />
-import { toPuppetType } from "../src/genesis/puppet_types";
+import { toPuppetType } from "TypeTransformer.ts";
 
-describe('toPuppetType', () => {
+describe('toPcoreType', () => {
   it('should convert number to Float', () => {
     expect(toPuppetType('number')).toBe('Float');
   });
