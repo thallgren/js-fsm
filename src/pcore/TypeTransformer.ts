@@ -1,5 +1,5 @@
 import * as ts from "typescript";
-import {Expression, Identifier, isExpressionStatement, isFunctionLike} from "typescript";
+import {Expression, Identifier, isFunctionLike} from "typescript";
 import {StringMap} from "./Util";
 
 /**
@@ -40,12 +40,18 @@ function transformTypeName(typeName: string) : string {
 
 /**
  * inferWorkflowTypes uses the TypeScript compiler to infer the types of input arguments and
- * resource states.
+ * actions and resources.
  * @param fn
  * @param content
  */
-export function inferWorkflowTypes(fn : string, content : string) : StringMap {
-  let sf = ts.createSourceFile(fn, content, ts.ScriptTarget.ES2018, true);
+export function inferWorkflowTypes(sources : Array<string>) : StringMap {
+  let program = ts.createProgram(sources, {
+    target: ts.ScriptTarget.ES2018,
+    module: ts.ModuleKind.CommonJS,
+  })
+
+  let checker = program.getTypeChecker();
+
   let collector = {};
   let path = [];
 
@@ -87,39 +93,48 @@ export function inferWorkflowTypes(fn : string, content : string) : StringMap {
     traverseProperties(o, traverseWorkflowProperty);
   };
 
-  let traverseStateBody = (b: ts.ConciseBody) => {
-    if(isExpressionStatement(b)) {
-      console.log(b);
+  let traversePtypeBody = (n : ts.Node) => {
+    // Extract the string literal from __ptype function
+    //
+    // __ptype() : string {
+    //   return "Some::Type::Name";
+    // }
+    if(ts.isStringLiteral(n)) {
+      collect('type', n.text)
     } else {
-      b.forEachChild((bc) => {
-        if(ts.isReturnStatement(bc) && bc.parent === b && ts.isNewExpression(bc.expression)) {
-          let ne = bc.expression;
-          if(ts.isPropertyAccessExpression(ne.expression) && ne.arguments.length === 1) {
-            let pa = ne.expression;
-            if(ts.isIdentifier(pa.expression)) {
-              collect('type', pa.getText());
-            }
-          }
-        } else if(ts.isPropertyAccessExpression(bc) && ts.isNewExpression(bc.parent)) {
-          let np = bc.parent.parent;
-          if(ts.isArrowFunction(np) && np.body === b && ts.isIdentifier(bc.expression)) {
-            collect('type', bc.getText());
-          }
-        }
-      })
+      ts.forEachChild(n, traversePtypeBody);
+    }
+  };
+
+  let traverseObjectType = (o : ts.Node) => {
+    // Find the __ptype() function and traverse its body
+    if(ts.isMethodDeclaration(o)) {
+      if(o.name.getText() === '__ptype') {
+        traversePtypeBody(o.body)
+      }
+    } else {
+      ts.forEachChild(o, traverseObjectType);
     }
   };
 
   let traverseResourceProperty = (pa: ts.PropertyAssignment) => {
     if(pa.name.getText() === 'state' && isFunctionLike(pa.initializer)) {
+      // Infer type information about input and state type
       let f = (<ts.FunctionLikeDeclaration>pa.initializer);
+
+      // The type of the initializer must be the type of the state itself.
+      // Let the checker find out what type that is so that we can extract
+      // the actual type from its __ptype() function
+      checker.getTypeAtLocation(f).getCallSignatures().forEach((s) => {
+        s.getReturnType().symbol.declarations.forEach(traverseObjectType);
+      });
+
+      // Extract the parameter types. Those are the types for the resource input variables
       let params = {};
       f.parameters.forEach((p) => {
         params[p.name.getText()] = p.type === undefined ? 'any' : p.type.getText();
       });
       collect('input', params);
-      traverseStateBody(f.body);
-      return;
     }
   };
 
@@ -183,7 +198,9 @@ export function inferWorkflowTypes(fn : string, content : string) : StringMap {
     ts.forEachChild(o, traverse);
   };
 
-  ts.forEachChild(sf, traverse);
+  for(const n of sources) {
+    ts.forEachChild(program.getSourceFile(n), traverse);
+  }
   return collector;
 }
 

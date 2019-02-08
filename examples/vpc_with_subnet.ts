@@ -1,9 +1,15 @@
-import {Lyra, resource, workflow} from "../src/servicesdk/builder";
-import {Genesis} from "./ec2_types";
-import Aws = Genesis.Aws;
 import {StringMap} from "../src/pcore/Util";
+import {Aws} from "./Aws";
+import {resource, workflow} from "../src/servicesdk/builder";
 
-Lyra.serve(workflow({
+function makeRouteTable(vpc_id: string, tags: StringMap) : Aws.RouteTable {
+  return new Aws.RouteTable({
+    vpc_id: vpc_id,
+    tags: tags
+  });
+}
+
+workflow({
   input: {
     tags: {type: 'StringMap', lookup: 'aws.tags'}
   },
@@ -30,9 +36,10 @@ Lyra.serve(workflow({
 
     subnet: resource({
       output: 'subnet_id',
-      state : (vpc_id: string, region: string, tags : StringMap) => new Aws.Subnet({
+      state : (vpc_id: string, region: string, tags: StringMap) => new Aws.Subnet({
         vpc_id                         : vpc_id,
         cidr_block                     : '192.168.1.0/24',
+        ipv6_cidr_block                : "",
         tags                           : tags,
         assign_ipv6_address_on_creation: false,
         map_public_ip_on_launch        : false,
@@ -42,12 +49,8 @@ Lyra.serve(workflow({
     }),
 
     routetable: resource({
-      input : {vpc_id: 'string', tags: 'StringMap'},
       output: {routetable_id: 'string'},
-      state : (vpc_id, tags) => new Aws.RouteTable({
-        vpc_id: vpc_id,
-        tags  : tags
-      })
+      state : (vpc_id: string, tags: StringMap) => makeRouteTable(vpc_id, tags)
     })
   }
-}));
+});

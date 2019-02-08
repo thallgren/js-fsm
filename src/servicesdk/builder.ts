@@ -5,12 +5,20 @@ import {AnyType, Type} from "../pcore/Type";
 import {Deferred} from "../pcore/Deferred";
 import {Parameter} from "../pcore/Parameter";
 import {StringMap} from "../pcore/Util";
+import {inferWorkflowTypes} from "../pcore/TypeTransformer";
 
 export class Lyra {
-  static serve(a : ActivityHash) : void {
-
+  static serve(manifestFile : string | null, serviceName : string, name : string, activity : ActivityMap) : Array<Definition> {
+    let sb = new ServiceBuilder(serviceName);
+    let inferred : StringMap = null;
+    if(manifestFile !== null) {
+      inferred = inferWorkflowTypes([manifestFile]);
+    }
+    sb.fromMap(name, activity, inferred);
+    return sb.definitions;
   }
 }
+
 /**
  * A StateProducer produces a state based on input variables
  */
@@ -26,71 +34,98 @@ export type InParam = { type?: string, lookup?: Data };
 export type OutParam = { type?: string, alias?: string };
 
 /**
- * The ActivityHash contains the properties common to all Activities
+ * The ActivityMap contains the properties common to all Activities
  */
-export interface ActivityHash {
+export interface ActivityMap {
+  style?: 'action' | 'resource' | 'workflow'
   input?: string | Array<string> | { [s: string]: string | InParam }
   output?: string | Array<string> | { [s: string]: string | OutParam }
   when?: string
 }
 
 /**
- * The ActionHash contains the properties of a workflow action.
+ * The ActionMap contains the properties of a workflow action.
  */
-export interface ActionHash extends ActivityHash {
+export interface ActionMap extends ActivityMap {
   do: ActionFunction
 }
 
 /**
- * The ResourceHash contains the properties of a workflow resource.
+ * The ResourceMap contains the properties of a workflow resource.
  */
-export interface ResourceHash extends ActivityHash {
+export interface ResourceMap extends ActivityMap {
   externalId?: string
   state: StateProducer
+  type?: string
 }
 
-export interface WorkflowHash extends ActivityHash {
-  activities: {[s: string]: ActivityHash }
+export interface WorkflowMap extends ActivityMap {
+  activities: {[s: string]: ActivityMap }
 }
 
-export function action(a : ActionHash) : ActivityHash {
+export function action(a : ActionMap) : ActivityMap {
+  a.style = 'action';
   return a;
 }
 
-export function resource(a : ResourceHash) : ActivityHash {
+export function resource(a : ResourceMap) : ActivityMap {
+  a.style = 'resource';
   return a;
 }
 
-export function workflow(a : WorkflowHash) : ActivityHash {
+export function workflow(a : WorkflowMap) : ActivityMap {
+  a.style = 'workflow';
   return a;
 }
 
 export class ServiceBuilder {
   readonly serviceId : TypedName;
-  readonly definitions : Array<Definition>;
-  readonly stateProducers : StringMap;
-  readonly actionFunctions : StringMap;
+  readonly definitions : Array<Definition> = [];
+  readonly stateProducers : StringMap = {};
+  readonly actionFunctions : StringMap = {};
 
   constructor(serviceName : string) {
     this.serviceId = new TypedName(Namespace.NsService, serviceName);
   }
 
+  fromMap(n : string, a : ActivityMap, inferred : StringMap) {
+    switch(a.style) {
+    case 'action':
+      let ab = new ActionBuilder(n, null);
+      ab.fromMap((<ActionMap>a));
+      this.definitions.push(ab.build(this, inferred));
+      break;
+    case 'resource':
+      let rb = new ResourceBuilder(n, null);
+      rb.fromMap((<ResourceMap>a));
+      this.definitions.push(rb.build(this, inferred));
+      break;
+    case 'workflow':
+      let wb = new WorkflowBuilder(n, null);
+      wb.fromMap((<WorkflowMap>a));
+      this.definitions.push(wb.build(this, inferred));
+      break;
+    default:
+      throw new Error(`activity hash for ${n} has no valid style`);
+    }
+  }
+
   action(name : string, bf : (rb : ActionBuilder) => void) {
     let rb = new ActionBuilder(name, null);
     bf(rb);
-    this.definitions.push(rb.build(this));
+    this.definitions.push(rb.build(this, null));
   }
 
   resource(name : string, bf : (rb : ResourceBuilder) => void) {
     let rb = new ResourceBuilder(name, null);
     bf(rb);
-    this.definitions.push(rb.build(this));
+    this.definitions.push(rb.build(this, null));
   }
 
   workflow(name : string, bf : (rb : WorkflowBuilder) => void) {
     let rb = new WorkflowBuilder(name, null);
     bf(rb);
-    this.definitions.push(rb.build(this));
+    this.definitions.push(rb.build(this, null));
   }
 }
 
@@ -113,8 +148,8 @@ export class Definition implements PcoreObject {
 export class ActivityBuilder {
   private readonly name: string;
   private readonly parent : ActivityBuilder | null;
-  private readonly in : { [s: string]: Parameter } = {};
-  private readonly out : { [s: string]: Parameter } = {};
+  private in : { [s: string]: Parameter };
+  private out : { [s: string]: Parameter };
   private guard? : string;
 
   constructor(name : string, parent : ActivityBuilder | null) {
@@ -122,8 +157,27 @@ export class ActivityBuilder {
     this.parent = parent;
   }
 
+  amendWithInferredTypes(inferred : StringMap) {
+    if(this.in === undefined) {
+      let ii = inferred['input'];
+      if(ii !== undefined) {
+        this.input(ii);
+      }
+    }
+  }
+
+  getLeafName() : string {
+    return this.name;
+  }
+
   getName() : string {
     return this.parent !== null ? this.parent.qualifyName(this.name) : this.name;
+  }
+
+  fromMap(m : ActivityMap) {
+    this.when(m.when);
+    this.input(m.input);
+    this.output(m.output);
   }
 
   when(guard : string) {
@@ -131,15 +185,31 @@ export class ActivityBuilder {
   }
 
   input(params : string | Array<string> | { [s: string]: string | InParam }) {
-    Object.assign(this.in, this.convertParams(true, params));
+    if(params) {
+      let ps = this.convertParams(true, params);
+      if(this.in === undefined) {
+        this.in = ps;
+      } else {
+        Object.assign(this.in, ps);
+      }
+    }
   }
 
   output(params : string | Array<string> | { [s: string]: string | OutParam }) {
-    Object.assign(this.out, this.convertParams(false, params));
+    if(params) {
+      let ps = this.convertParams(false, params);
+      if(this.out === undefined) {
+        this.out = ps;
+      } else {
+        Object.assign(this.out, ps);
+      }
+    }
   }
 
-  build(sb : ServiceBuilder) : Definition {
-    return new Definition(sb.serviceId, new TypedName(Namespace.NsDefinition, this.getName()), this.definitionProperties(sb));
+  build(sb : ServiceBuilder, inferred : StringMap) : Definition {
+    if(inferred !== null)
+      this.amendWithInferredTypes(inferred);
+    return new Definition(sb.serviceId, new TypedName(Namespace.NsDefinition, this.getName()), this.definitionProperties(sb, inferred));
   }
 
   protected qualifyName(n : string) : string {
@@ -185,12 +255,12 @@ export class ActivityBuilder {
     return result;
   }
 
-  protected definitionProperties(sb : ServiceBuilder): StringMap {
+  protected definitionProperties(sb : ServiceBuilder, inferred : StringMap): StringMap {
     let props = {};
-    if(Object.keys(this.in).length > 0) {
+    if(this.in !== undefined) {
       props['input'] = this.in;
     }
-    if(Object.keys(this.out).length > 0) {
+    if(this.out !== undefined) {
       props['output'] = this.out;
     }
     if(this.guard !== undefined) {
@@ -202,7 +272,18 @@ export class ActivityBuilder {
 
 export class ResourceBuilder extends ActivityBuilder {
   private extId: string;
+  private typ: string;
   private stateProducer: StateProducer;
+
+  amendWithInferredTypes(inferred : StringMap) {
+    super.amendWithInferredTypes(inferred);
+    if(this.typ === undefined) {
+      let it = inferred['type'];
+      if(it !== undefined) {
+        this.type(it);
+      }
+    }
+  }
 
   externalId(extId : string) {
     this.extId = extId;
@@ -212,17 +293,31 @@ export class ResourceBuilder extends ActivityBuilder {
     this.stateProducer = stateProducer
   }
 
-  build(sb : ServiceBuilder) : Definition {
+  type(t: string) {
+    this.typ = t;
+  }
+
+  build(sb : ServiceBuilder, inferred : StringMap) : Definition {
     if(this.stateProducer !== null) {
       sb.stateProducers[this.getName()] = this.stateProducer;
     }
-    return super.build(sb);
+    return super.build(sb, inferred);
   }
 
-  protected definitionProperties(sb : ServiceBuilder): StringMap {
-    let props = super.definitionProperties(sb);
-    if(this.extId != null) {
+  fromMap(m : ResourceMap) {
+    super.fromMap(m);
+    this.state(m.state);
+    this.type(m.type);
+    this.externalId(m.externalId);
+  }
+
+  protected definitionProperties(sb : ServiceBuilder, inferred : StringMap): StringMap {
+    let props = super.definitionProperties(sb, inferred);
+    if(this.extId != undefined) {
       props['external_id'] = this.extId;
+    }
+    if(this.typ != undefined) {
+      props['type'] = this.typ;
     }
     return props;
   }
@@ -235,16 +330,56 @@ export class ActionBuilder extends ActivityBuilder {
     this.actionFunction = actionFunction
   }
 
-  build(sb : ServiceBuilder) : Definition {
+  build(sb : ServiceBuilder, inferred : StringMap) : Definition {
     if(this.actionFunction !== null) {
       sb.actionFunctions[this.getName()] = this.actionFunction;
     }
-    return super.build(sb);
+    return super.build(sb, inferred);
+  }
+
+  fromMap(m : ActionMap) {
+    super.fromMap(m);
+    this.do(m.do);
   }
 }
 
 export class WorkflowBuilder extends ActivityBuilder {
   private readonly activities: Array<ActivityBuilder> = [];
+
+  amendWithInferredTypes(inferred : StringMap) {
+    super.amendWithInferredTypes(inferred);
+    this.activities.forEach((a) => {
+      let sub = inferred[a.getLeafName()];
+      if(sub !== undefined) {
+        a.amendWithInferredTypes(sub);
+      }
+    });
+  }
+
+  fromMap(m : WorkflowMap) {
+    super.fromMap(m);
+    for(const [n, a] of Object.entries(m.activities)) {
+      switch(a.style) {
+      case 'action':
+        let ab = new ActionBuilder(n, this);
+        ab.fromMap((<ActionMap>a));
+        this.activities.push(ab);
+        break;
+      case 'resource':
+        let rb = new ResourceBuilder(n, this);
+        rb.fromMap((<ResourceMap>a));
+        this.activities.push(rb);
+        break;
+      case 'workflow':
+        let wb = new WorkflowBuilder(n, this);
+        wb.fromMap((<WorkflowMap>a));
+        this.activities.push(wb);
+        break;
+      default:
+        throw new Error(`activity hash for ${this.qualifyName(n)} has no valid style`);
+      }
+    }
+  }
 
   action(name : string, bf : (rb : ActionBuilder) => void) {
     let rb = new ActionBuilder(name, this);
@@ -264,9 +399,9 @@ export class WorkflowBuilder extends ActivityBuilder {
     this.activities.push(rb);
   }
 
-  protected definitionProperties(sb : ServiceBuilder): StringMap {
-    let props = super.definitionProperties(sb);
-    props['activities'] = this.activities.map((ab) => ab.build(sb));
+  protected definitionProperties(sb : ServiceBuilder, inferred : StringMap): StringMap {
+    let props = super.definitionProperties(sb, inferred);
+    props['activities'] = this.activities.map((ab) => ab.build(sb, inferred));
     return props;
   }
 }
