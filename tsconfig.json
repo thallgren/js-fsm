@@ -11,17 +11,11 @@
     "outDir": "dist",
     "removeComments": true,
     "allowSyntheticDefaultImports": true,
-    "types" : ["node"],
     "rootDirs": [
       "src",
+      "examples",
       "generated"
-    ],
-    "paths": {
-      "*": [
-        "src/types/*",
-        "generated/*"
-      ]
-    }
+    ]
   },
   "include": [
     "src/**/*",

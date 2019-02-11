@@ -31,7 +31,7 @@ const MaxDedup = 2;
 export interface ValueConsumer {
   canDoBinary() : boolean
   canDoComplexKeys() : boolean;
-  add(value : boolean | number | string | null);
+  add(value : boolean | number | string | Uint8Array | null);
   addArray(len : number, doer : () => void);
   addHash(len : number, doer : () => void);
   addRef(ref : number);

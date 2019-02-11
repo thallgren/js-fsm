@@ -1,16 +1,39 @@
 /// <reference types="jest" />
 
-import {inferWorkflowTypes} from "../src/pcore/TypeTransformer";
+import {transpileManifest} from "../src/pcore/TypeTransformer";
 
 describe('inferWorkflowTypes', () => {
   it('finds types', () => {
-    let collector = inferWorkflowTypes(['examples/vpc_with_subnet.ts']);
+    let tr = transpileManifest(['examples/vpc_with_subnet.ts']);
 
-    expect(collector).toEqual(
+    expect(tr.inferredTypes).toEqual(
       {
-        "vpc": {"input": {"region": "string", "tags": "StringMap"}, "type": "Aws::Vpc"},
-        "subnet": {"input": {"region": "string", "tags": "StringMap", "vpc_id": "string"}, "type": "Aws::Subnet"},
-        "routetable": {"input": {"tags": "StringMap", "vpc_id": "string"}, "type": "Aws::RouteTable"}
+        vpc: {
+          input: {
+            region: "string", tags: "StringMap"
+          },
+          type: "Aws::Vpc"
+        },
+        vpcDone: {
+          input: {
+            vpc_id: "string"
+          },
+          output: {
+            vpc_ok: "boolean"
+          }
+        },
+        subnet: {
+          input: {
+            region: "string", tags: "StringMap", vpc_id: "string"
+          },
+          type: "Aws::Subnet"
+        },
+        routetable: {
+          input: {
+            tags: "StringMap", vpc_id: "string"
+          },
+          type: "Aws::RouteTable"
+        }
       });
   });
 });

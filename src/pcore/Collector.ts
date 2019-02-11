@@ -14,7 +14,7 @@ export class MemCollector implements Collector {
     this.stack.push(new Array<any>());
   }
 
-  add(value: boolean | number | string | null) {
+  add(value: boolean | number | string | Uint8Array | null) {
     this.addAny(value);
   }
 

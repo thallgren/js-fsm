@@ -1,5 +1,6 @@
 import {PcoreValue} from "./Serializer";
 import {StringMap} from "./Util";
+import * as util from "util";
 
 export enum Namespace {
   NsType = 'type',
@@ -42,6 +43,14 @@ export class TypedName implements PcoreValue {
     this.authority = authority;
     this.parts = parts;
     this.canonical = `${this.authority}/${namespace}/${name}`.toLowerCase();
+  }
+
+  toString() : string {
+    return `${this.authority}/${this.namespace}/${this.name}`;
+  }
+
+  [util.inspect.custom](depth, options) {
+    return `TypedName ${util.inspect(this.__pvalue(), depth, options)}`;
   }
 
   __ptype(): string {

@@ -1,5 +1,4 @@
 import * as ts from "typescript";
-import {Expression, Identifier, isFunctionLike} from "typescript";
 import {StringMap} from "./Util";
 
 /**
@@ -33,25 +32,42 @@ function transformTypeName(typeName: string) : string {
     return 'Timestamp';
   case 'RegExp':
     return 'Regexp';
+  case 'Uint8Array':
+    return 'Binary';
   default:
     return typeName;
   }
 }
 
+const defaultCompilerOptions : ts.CompilerOptions = {
+  target: ts.ScriptTarget.ES2018,
+  module: ts.ModuleKind.CommonJS,
+};
+
+export class TranspiledResult {
+  readonly program : ts.Program;
+  readonly inferredTypes : StringMap;
+  readonly sourceFiles : {[s: string] : ts.SourceFile};
+
+  constructor(program : ts.Program, inferredTypes : StringMap) {
+    this.program = program;
+    this.inferredTypes = inferredTypes;
+  }
+}
+
 /**
- * inferWorkflowTypes uses the TypeScript compiler to infer the types of input arguments and
+ * transpileManifest transpiles a manifest to infer the types of input arguments and
  * actions and resources.
- * @param fn
- * @param content
+ * @param sources
+ * @param options
  */
-export function inferWorkflowTypes(sources : Array<string>) : StringMap {
-  let program = ts.createProgram(sources, {
-    target: ts.ScriptTarget.ES2018,
-    module: ts.ModuleKind.CommonJS,
-  })
-
+export function transpileManifest(sources : Array<string>, options : ts.CompilerOptions = {}) : TranspiledResult {
+  for(const [k, v] of Object.entries(defaultCompilerOptions)) {
+    if(options[k] === undefined)
+      options[k] = v;
+  }
+  let program = ts.createProgram(sources, options);
   let checker = program.getTypeChecker();
-
   let collector = {};
   let path = [];
 
@@ -64,9 +80,9 @@ export function inferWorkflowTypes(sources : Array<string>) : StringMap {
         leaf[p] = b;
       }
       leaf = b;
-    })
+    });
     leaf[name] = value;
-  }
+  };
 
   let expectKind = <T extends ts.Node>(n : ts.Node, okFunc : (n : ts.Node) => n is T, expected : string) : T => {
     if(!okFunc(n)) {
@@ -75,7 +91,7 @@ export function inferWorkflowTypes(sources : Array<string>) : StringMap {
     return n;
   };
 
-  let expectHash = (na : ts.NodeArray<Expression>) : ts.ObjectLiteralExpression => {
+  let expectHash = (na : ts.NodeArray<ts.Expression>) : ts.ObjectLiteralExpression => {
     if(na.length == 1) {
       return expectKind(na[0], ts.isObjectLiteralExpression, 'object literal')
     }
@@ -86,11 +102,15 @@ export function inferWorkflowTypes(sources : Array<string>) : StringMap {
     o.properties.forEach((p) => tf(expectKind(p, ts.isPropertyAssignment, 'property assignment')));
   };
 
-  let traverseAction = (o : ts.ObjectLiteralExpression) => {
-  };
-
-  let traverseWorkflow = (o : ts.ObjectLiteralExpression) => {
-    traverseProperties(o, traverseWorkflowProperty);
+  let traverseActionReturn = (o : ts.Node) => {
+    let ht = expectKind(o, ts.isTypeLiteralNode, 'literal hash type');
+    let params = {};
+    for(const m of ht.members) {
+      if(ts.isPropertySignature(m)) {
+        params[m.name.getText()] = m.type === undefined ? 'any' : m.type.getText();
+      }
+    }
+    collect('output', params);
   };
 
   let traversePtypeBody = (n : ts.Node) => {
@@ -117,8 +137,33 @@ export function inferWorkflowTypes(sources : Array<string>) : StringMap {
     }
   };
 
+  // Traverses the action hash
+  let traverseActionProperty = (pa: ts.PropertyAssignment) => {
+    if(pa.name.getText() === 'do' && ts.isFunctionLike(pa.initializer)) {
+      // Infer type information about input and state type
+      let f = (<ts.FunctionLikeDeclaration>pa.initializer);
+
+      // The type of the initializer must be the type of the state itself.
+      // Let the checker find out what type that is so that we can extract
+      // the actual type from its __ptype() function
+      checker.getTypeAtLocation(f).getCallSignatures().forEach((s) => {
+        s.getReturnType().symbol.declarations.forEach(traverseActionReturn);
+      });
+
+      // Extract the parameter types. Those are the types for the resource input variables
+      let params = {};
+      f.parameters.forEach((p) => {
+        params[p.name.getText()] = p.type === undefined ? 'any' : p.type.getText();
+      });
+      collect('input', params);
+
+      // Return type of do function must be a map,
+    }
+  };
+
+  // Traverses the resource hash
   let traverseResourceProperty = (pa: ts.PropertyAssignment) => {
-    if(pa.name.getText() === 'state' && isFunctionLike(pa.initializer)) {
+    if(pa.name.getText() === 'state' && ts.isFunctionLike(pa.initializer)) {
       // Infer type information about input and state type
       let f = (<ts.FunctionLikeDeclaration>pa.initializer);
 
@@ -138,10 +183,6 @@ export function inferWorkflowTypes(sources : Array<string>) : StringMap {
     }
   };
 
-  let traverseResource = (o : ts.ObjectLiteralExpression) => {
-    traverseProperties(o, traverseResourceProperty);
-  };
-
   // Traverses the workflow hash
   let traverseWorkflowProperty = (n : ts.PropertyAssignment) => {
     if(n.name.getText() !== 'activities')
@@ -153,7 +194,7 @@ export function inferWorkflowTypes(sources : Array<string>) : StringMap {
       let f = expectKind(pa.initializer, ts.isCallExpression, 'call');
       let c = f.expression;
       if(ts.isIdentifier(c)) {
-        let key = (<Identifier>c).text;
+        let key = (<ts.Identifier>c).text;
         switch (key) {
         case 'resource':
           path.push(pa.name.getText());
@@ -175,13 +216,17 @@ export function inferWorkflowTypes(sources : Array<string>) : StringMap {
     });
   };
 
+  let traverseAction = (o : ts.ObjectLiteralExpression) => traverseProperties(o, traverseActionProperty);
+  let traverseWorkflow = (o : ts.ObjectLiteralExpression) => traverseProperties(o, traverseWorkflowProperty);
+  let traverseResource = (o : ts.ObjectLiteralExpression) => traverseProperties(o, traverseResourceProperty);
+
   let traverse = (o : ts.Node) => {
     switch(o.kind) {
     case ts.SyntaxKind.CallExpression:
       let f = (<ts.CallExpression>o);
       let c = f.expression;
       if(ts.isIdentifier(c)) {
-        let key = (<Identifier>c).text;
+        let key = (<ts.Identifier>c).text;
         switch (key) {
         case 'resource':
           traverseResource(expectHash(f.arguments));
@@ -198,10 +243,10 @@ export function inferWorkflowTypes(sources : Array<string>) : StringMap {
     ts.forEachChild(o, traverse);
   };
 
-  for(const n of sources) {
+  for(const n of sources)
     ts.forEachChild(program.getSourceFile(n), traverse);
-  }
-  return collector;
+
+  return new TranspiledResult(program, collector);
 }
 
 function parseType(t : string) : ts.TypeNode {

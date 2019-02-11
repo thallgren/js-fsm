@@ -1,6 +1,6 @@
 import {StringMap} from "../src/pcore/Util";
 import {Aws} from "./Aws";
-import {resource, workflow} from "../src/servicesdk/builder";
+import {action, resource, workflow} from "../src/servicesdk/builder";
 
 function makeRouteTable(vpc_id: string, tags: StringMap) : Aws.RouteTable {
   return new Aws.RouteTable({
@@ -9,7 +9,7 @@ function makeRouteTable(vpc_id: string, tags: StringMap) : Aws.RouteTable {
   });
 }
 
-workflow({
+export = workflow({
   input: {
     tags: {type: 'StringMap', lookup: 'aws.tags'}
   },
@@ -32,6 +32,13 @@ workflow({
         state                          : 'available',
         tags                           : tags,
       })
+    }),
+
+    vpcDone: action({
+      do: (vpc_id : string) : {vpc_ok: boolean} => {
+        console.log(`created vpc with id ${vpc_id}`);
+        return { vpc_ok: true }
+      }
     }),
 
     subnet: resource({

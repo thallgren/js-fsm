@@ -93,7 +93,7 @@ const wellknownTypes = {
         if(type.prototype.__ptype !== undefined)
           type.apply(inst, [value]);
         else
-          type.apply(inst, ks.map((k) => value[k]));
+          type.apply(inst, ks.map(k => value[k]));
         return inst;
       }
 

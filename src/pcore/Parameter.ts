@@ -1,6 +1,7 @@
 import {PcoreValue} from "./Serializer";
 import {StringMap} from "./Util";
 import {AnyType, Type} from "./Type";
+import * as util from "util";
 
 export class Parameter implements PcoreValue {
   readonly name : string;
@@ -18,6 +19,10 @@ export class Parameter implements PcoreValue {
     this.type = type;
     this.value = value;
     this.captures = captures;
+  }
+
+  [util.inspect.custom](depth, options) {
+    return `Parameter ${util.inspect(this.__pvalue(), depth, options)}`;
   }
 
   __ptype(): string {

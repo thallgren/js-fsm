@@ -166,7 +166,7 @@ class FunctionImpl implements Function {
   }
 }
 
-export class ActorServer {
+export class Service {
   private readonly server: grpc.Server;
   private readonly startPort : number;
   private readonly endPort : number;
@@ -229,7 +229,7 @@ export class ActorServer {
   }
 
   start() {
-    ActorServer.getAvailablePort(this.startPort, this.endPort).then(port => {
+    Service.getAvailablePort(this.startPort, this.endPort).then(port => {
       let addr = `0.0.0.0:${port}`;
       this.server.bind(addr, grpc.ServerCredentials.createInsecure());
 

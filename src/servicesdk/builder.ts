@@ -5,19 +5,7 @@ import {AnyType, Type} from "../pcore/Type";
 import {Deferred} from "../pcore/Deferred";
 import {Parameter} from "../pcore/Parameter";
 import {StringMap} from "../pcore/Util";
-import {inferWorkflowTypes} from "../pcore/TypeTransformer";
-
-export class Lyra {
-  static serve(manifestFile : string | null, serviceName : string, name : string, activity : ActivityMap) : Array<Definition> {
-    let sb = new ServiceBuilder(serviceName);
-    let inferred : StringMap = null;
-    if(manifestFile !== null) {
-      inferred = inferWorkflowTypes([manifestFile]);
-    }
-    sb.fromMap(name, activity, inferred);
-    return sb.definitions;
-  }
-}
+import * as util from "util";
 
 /**
  * A StateProducer produces a state based on input variables
@@ -27,7 +15,7 @@ export type StateProducer = (...args : any) => Object
 /**
  * A StateProducer produces a state based on input variables
  */
-export type ActionFunction = (input : StringMap) => StringMap
+export type ActionFunction = (...args : any) => StringMap
 
 export type InParam = { type?: string, lookup?: Data };
 
@@ -41,6 +29,11 @@ export interface ActivityMap {
   input?: string | Array<string> | { [s: string]: string | InParam }
   output?: string | Array<string> | { [s: string]: string | OutParam }
   when?: string
+}
+
+export function isActivityMap(m : ActivityMap) : m is ActivityMap {
+  let s = m.style;
+  return s === 'action' || s === 'resource' || s === 'workflow';
 }
 
 /**
@@ -140,6 +133,10 @@ export class Definition implements PcoreObject {
     this.properties = properties;
   }
 
+  toString() : string {
+    return util.formatWithOptions({ depth: 10}, '%O', this);
+  }
+
   __ptype() : string {
     return 'Service::Definition';
   }
@@ -162,6 +159,12 @@ export class ActivityBuilder {
       let ii = inferred['input'];
       if(ii !== undefined) {
         this.input(ii);
+      }
+    }
+    if(this.out === undefined) {
+      let io = inferred['output'];
+      if(io !== undefined) {
+        this.output(io);
       }
     }
   }
@@ -348,7 +351,7 @@ export class WorkflowBuilder extends ActivityBuilder {
 
   amendWithInferredTypes(inferred : StringMap) {
     super.amendWithInferredTypes(inferred);
-    this.activities.forEach((a) => {
+    this.activities.forEach(a => {
       let sub = inferred[a.getLeafName()];
       if(sub !== undefined) {
         a.amendWithInferredTypes(sub);
@@ -401,7 +404,7 @@ export class WorkflowBuilder extends ActivityBuilder {
 
   protected definitionProperties(sb : ServiceBuilder, inferred : StringMap): StringMap {
     let props = super.definitionProperties(sb, inferred);
-    props['activities'] = this.activities.map((ab) => ab.build(sb, inferred));
+    props['activities'] = this.activities.map(ab => ab.build(sb, inferred));
     return props;
   }
 }

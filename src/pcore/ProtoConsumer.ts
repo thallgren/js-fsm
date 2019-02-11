@@ -1,5 +1,6 @@
 import {ValueConsumer} from "./Serializer";
-import {Data, DataArray, DataEntry, DataHash} from "../../generated/datapb/data_pb";
+import {Data, DataArray, DataEntry, DataHash, NullValue} from "../../generated/datapb/data_pb";
+import {types} from "util";
 
 export class ProtoConsumer implements ValueConsumer {
   private readonly stack : Array<Array<Data>>;
@@ -9,7 +10,7 @@ export class ProtoConsumer implements ValueConsumer {
     this.stack.push(new Array<Data>());
   }
 
-  add(value: boolean | number | string | null) {
+  add(value: boolean | number | string | Uint8Array | null) {
     let d = new Data();
 
     switch (typeof value) {
@@ -23,7 +24,10 @@ export class ProtoConsumer implements ValueConsumer {
       d.setStringValue(value);
       break;
     default:
-      d.setUndefValue(value);
+      if(types.isUint8Array(value))
+        d.setBinaryValue(value);
+      else
+        d.setUndefValue(NullValue.NULL_VALUE);
     }
     this.addData(d);
   }
@@ -88,3 +92,40 @@ export class ProtoConsumer implements ValueConsumer {
     this.stack[this.stack.length - 1].push(value);
   }
 }
+
+export function consumePBData(data: Data, consumer : ValueConsumer): void {
+  switch (data.getKindCase().valueOf()) {
+  case Data.KindCase.BOOLEAN_VALUE:
+    consumer.add(data.getBooleanValue());
+    break;
+  case Data.KindCase.INTEGER_VALUE:
+    consumer.add(data.getIntegerValue());
+    break;
+  case Data.KindCase.FLOAT_VALUE:
+    consumer.add(data.getFloatValue());
+    break;
+  case Data.KindCase.STRING_VALUE:
+    consumer.add(data.getStringValue());
+    break;
+  case Data.KindCase.ARRAY_VALUE:
+    let av = data.getArrayValue().getValuesList();
+    consumer.addArray(av.length, () => av.forEach((e) => consumePBData(e, consumer)));
+    break;
+  case Data.KindCase.HASH_VALUE:
+    let hv = data.getHashValue().getEntriesList();
+    consumer.addHash(hv.length, () => hv.forEach((entry: DataEntry) => {
+      consumePBData(entry.getKey(), consumer);
+      consumePBData(entry.getValue(), consumer);
+    }));
+    break;
+  case Data.KindCase.BINARY_VALUE:
+    consumer.add(data.getBinaryValue());
+    break;
+  case Data.KindCase.REFERENCE:
+    consumer.addRef(data.getReference());
+    break;
+  default:
+    consumer.add(null);
+  }
+}
+
